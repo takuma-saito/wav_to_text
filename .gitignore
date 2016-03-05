@@ -2,3 +2,4 @@
 *.wav
 *.wavpcm
 *.png
+sound/*

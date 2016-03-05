@@ -111,7 +111,7 @@
 (define (string->bytes value :optional len)
   (map char->integer value))
 
-;; these function is identity.
+;; These function must be identity.
 ;; ((.$ bytes->int (cut int->bytes <>)) -28)
 ;; ((.$ bytes->uint (cut uint->bytes <>)) 29834)
 ;; ((.$ bytes->string (cut string->bytes <>)) "RIFF")
@@ -253,7 +253,22 @@
    (map (.$ nbyte->number reverse)
         (slices nbyte (/ (length nbyte) channels))))
 
-(define (run-decode-main specs stream :optional (hook id))
+(define (calc-bits-length specs)
+  (define (value x) (~ (~ specs x) 'value))
+  (* (/ (value 'block-align) (value 'num-channels)) 8))
+
+(define (normalize x specs)
+  (let* ([bits-length (calc-bits-length specs)]
+         [max (ash 1 (- bits-length 1))])
+    (inexact (/ x max))))
+
+(define (restore x specs)
+  (let* ([bits-length (calc-bits-length specs)])
+    (x->integer (* x (ash 1 (- bits-length 1))))))
+
+(define (hook-id x specs) x)
+
+(define (run-decode-main specs stream :optional (hook hook-id))
   (define (value x) (~ (~ specs x) 'value))
   (let* ([bits-per-sample (value 'bits-per-sample)]
          [channels (value 'num-channels)]
@@ -263,9 +278,12 @@
          [ret '()])
     (while (stream block) (.$ not eof-object? car) => nbyte
            (=: ret (cons (fmt nbyte nbyte->number channels) ret)))
-    ($ transpose $ (map$ hook) $ transpose (reverse ret))))
+    ($ transpose $
+       (map$ (^ (xs) (map (^ (x) (hook x specs)) xs)))$
+       transpose
+       (reverse ret))))
 
-(define (run-decode stream :optional (hook id))
+(define (run-decode stream :optional (hook hook-id))
   (let ([specs (read-wav-specs stream)])
     (string-append
      (specs->comments specs add-comment-tag)
@@ -273,31 +291,29 @@
         (map$ (.$ (cut string-join <> " ") (map$ number->string)))
         (run-decode-main specs stream hook)))))
 
-(define (run-encode-main specs lines)
+(define (run-encode-main specs lines :optional (hook hook-id))
   (define (value x) (~ (~ specs x) 'value))
   (let ([ret '()]
         [bytes-length (/ (value 'block-align) (value 'num-channels))])
     ($ (cut append-map id <>) $
+       (map$ (append-map$ (.$ reverse (cut int->bytes <> bytes-length)))) $
        (cut map <> lines)
        (^ (line)
-          (append-map (.$ reverse
-                          (cut int->bytes <> bytes-length) x->integer)
-                      (string-split line " "))))))
+          (map (.$ (^ (x) (hook x specs)) x->number)
+               (string-split line " "))))))
 
 ;; content is string
-(define (run-encode lines)
+(define (run-encode lines :optional (hook hook-id))
   (receive (specs lines) (separate-specs lines)
            (append
             (run-encode-specs specs)
-            (run-encode-main specs lines))))
+            (run-encode-main specs lines hook))))
 
-;; (define specs (separate-specs (file->lines "a.txt")))
+;; ((make-std-output) (run-decode (file->stream "mixed_a.wav") normalize))
+;; ((make-std-output) (run-decode (file->stream "mixed_b.wav") normalize))
 
-((make-std-output) (run-decode (file->stream "music_A.wav")))
-
-;; ((make-output "hoge.wav") (run-encode (file->lines "out.txt")))
+;; ((make-output "sig_b.wav") (run-encode (file->lines "meta-b.txt") restore))
 
 ;; (show-specs (file->stream "a.wav"))
-
 
 
